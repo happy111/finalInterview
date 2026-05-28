@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import jsonschema
+import yaml
+
+
+def get_json_schema(schema_type: str) -> Optional[Any]:
+    path = Path(__file__).resolve().parent.parent / "schema" / f"yaml_schema_{schema_type}.json"
+    return json.loads(path.read_text())
+
+
+CASE_SCHEMA: Dict[str, Any] = {'function': get_json_schema('function'), 'class': get_json_schema('class')}
+
+
+class YamlCaseError(Exception):
+    pass
+
+
+def load_function_cases(path: Path) -> Dict[str, List[Dict[str, Any]]]:
+    print(path)
+    if not path.exists():
+        raise YamlCaseError(f"YAML not found : {path}")
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            if not isinstance(data, dict):
+                raise YamlCaseError(f"{path} must contain a valid mapping")
+    except yaml.YAMLError as e:
+        raise YamlCaseError(f"Invalid YAML format in  {path}: {e}")
+
+    functions: Dict[str, Dict[List[Dict[str, Any]]]] = {}
+    try:
+        init = None
+        for func_name, case_types in data.items():
+            validated_cases = []
+            if case_types['type'] == 'class':
+                init = (case_types.get('init_parameters'))
+            for case in case_types['cases']:
+                jsonschema.validate(instance=case, schema=CASE_SCHEMA[case_types['type']])
+                expected = case.get("expected", {})
+                if "result" in expected and expected.get("error"):
+                    raise YamlCaseError(f"Case {case['case_id']}  in  {path} has both result  and error")
+                if case_types['type'] == 'class' and init:
+                    validated_cases.append((case, init))
+                else:
+                    validated_cases.append(case)
+            functions[func_name] = dict(type=case_types['type'], cases=validated_cases)
+    except jsonschema.ValidationError as e:
+        raise YamlCaseError(f"Schema validation failed for {path}: {e.message}")
+    return functions

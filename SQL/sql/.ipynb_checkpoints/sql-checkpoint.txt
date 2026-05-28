@@ -1,0 +1,23 @@
+# Create a table
+
+
+CREATE TABLE employees (
+    emp_id INT PRIMARY KEY,
+    emp_name VARCHAR(255),
+    dept_id INT,
+    salary DECIMAL(10, 2),
+    bonus_percentage DECIMAL(4, 2)
+);
+
+# insert data
+
+INSERT INTO employees (emp_id, emp_name, dept_id, salary, bonus_percentage)
+VALUES
+    (1001, 'xyz', 10, 25000, 8.5),
+    (1002, 'abc', 20, 34000, 6.5);
+
+
+# Calculate netsalary
+
+SELECT emp_name,salary,bonus_percentage,salary+(salary*bonus_percentage/100) as net_salary FROM employees;
+

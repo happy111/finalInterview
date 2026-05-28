@@ -1,0 +1,6 @@
+Flask-Migrate
+Flask-SQLAlchemy
+Flask-RESTful
+flask-swagger
+python-dotenv
+mysqlclient

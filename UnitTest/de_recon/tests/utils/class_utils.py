@@ -1,0 +1,16 @@
+import inspect
+
+
+def get_instance_methods_with_inputs(cls):
+    result = {}
+    for name, member in cls.__dict__.items():
+        if inspect.isfunction(member):  # instance method
+            sig = inspect.signature(member)
+            # Exclude 'self' and check for other parameters
+            params = [p for p in sig.parameters.values() if p.name != 'self']
+            result[name] = {
+                "is_instance_method": True,
+                "has_input": len(params) > 0,
+                "input_parameters": [p.name for p in params]
+            }
+    return result
