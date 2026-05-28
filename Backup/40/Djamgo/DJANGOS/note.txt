@@ -1,0 +1,20 @@
+virtualenv -p python3 venv
+venv\Scripts\activate
+djagno-admin startproject zapio
+
+https://www.youtube.com/watch?v=MZDHscIJgyU
+https://pypi.org/project/django-admin-adminlte/
+
+J18A7HJQ1Y
+
+Python documentation generator
+
+binary converter
+
+Multiline event extraction
+
+
+https://github.com/boxabhi?page=2&tab=repositories
+
+
+https://www.advancebackend.com/s/courses/662a37c0c759fe57b505f62a/take

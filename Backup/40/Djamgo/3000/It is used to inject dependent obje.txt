@@ -1,0 +1,12 @@
+It is used to inject dependent object into target object is called autowired.
+
+Model used for send data ui to controller
+and send response controller to ui
+
+A modern, Fast (high performance) web framework for building APIs with Python 3.6
+
+Built on top of Starlette and Pydantice
+
+Async by default
+
+OpenAPI documentation out of the box

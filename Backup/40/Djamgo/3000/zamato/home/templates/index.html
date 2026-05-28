@@ -1,0 +1,24 @@
+
+   {% extends "base.html" %}
+
+   			
+   {% block  start %}
+
+
+
+	 My FIrst project
+
+      {{names}}
+      <br />
+
+      {% for item in names %}
+      	{% if not  item == "ram"%}
+               <h2> {{item | length}}</h2>
+               {% endif %}
+      {% endfor %}
+
+	 <a href="/contact/"> Contact </a>
+
+
+   {% endblock %}
+

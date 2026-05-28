@@ -1,0 +1,3 @@
+Static Methods : For utility methods / helper method provided by interface.-
+
+private method :- To write common logic, sensitive logic, which are donot wanto to disclosure outside.
