@@ -1,0 +1,102 @@
+from app import config
+from tests.utils.utils import generic_function
+
+
+def test_str_to_bool(case_data, function_resolver):
+    func = function_resolver("str_to_bool")
+    generic_function(case_data, func)
+
+
+def test_create_hash(case_data, function_resolver):
+    func = function_resolver("create_hash")
+    generic_function(case_data, func)
+
+
+def test_platform_specific_topic_name(case_data, function_resolver):
+    func = function_resolver("platform_specific_topic_name")
+    generic_function(case_data, func)
+
+def test_get_watermark_attr(case_data, function_resolver):
+    func = function_resolver("get_watermark_attr")
+    generic_function(case_data, func)
+
+
+def test_build_job_name(case_data, function_resolver, monkeypatch):
+    func = function_resolver("build_job_name")
+    generic_function(case_data, func, monkeypatch)
+
+def test_date_format(case_data, function_resolver):
+    func = function_resolver("date_format")
+    generic_function(case_data, func)
+
+
+# def test_date_format(case_data, function_resolver):
+#     func = function_resolver("date_format")
+#     inputs = {i["column"]: i["value"] for i in case_data["input"]}
+#     # Convert string to datetime if needed
+#     if inputs["format"] == "revert":
+#         inputs["date"] = datetime.fromisoformat(inputs["date"])
+#     result = func(**inputs)
+#     # If result is datetime, convert to string for comparison
+#     if isinstance(result, datetime):
+#         result = result.strftime("%Y-%m-%d")
+#     assert result == case_data["expected"]["result"]
+
+
+def test_is_valid_date(case_data, function_resolver):
+    func = function_resolver("is_valid_date")
+    inputs = {i["column"]: i["value"] for i in case_data["input"]}
+    result = func(**inputs)
+    assert result == case_data["expected"]["result"]
+
+
+def test_lazy_load_function(case_data, function_resolver):
+    call_count = {"count": 0}
+    def sample_function():
+        call_count["count"] += 1
+        return f"loaded-{call_count['count']}"
+    wrapped = function_resolver("lazy_load_function")(sample_function)
+    result = [wrapped(), wrapped(), wrapped()]
+    assert result == case_data["expected"]["result"]
+    assert call_count["count"] == 1
+
+def test_batch(case_data, function_resolver):
+    func = function_resolver("batch")
+    inputs = {i["column"]: i["value"] for i in case_data["input"]}
+    result = list(func(**inputs))  # Convert generator to list
+    assert result == case_data["expected"]["result"]
+
+def test_construct_connection_id(case_data, function_resolver):
+    func = function_resolver("construct_connection_id")
+    inputs = {i["column"]: i["value"] for i in case_data["input"]}
+    # Apply mock for config.app_env
+    if "mocks" in case_data:
+        for mock in case_data["mocks"]:
+            if mock["target"].endswith("config.app_env"):
+                config.app_env = mock["return_value"]
+
+    result = func(**inputs)
+    assert result == case_data["expected"]["result"]
+
+
+def test_application_log(case_data, function_resolver):
+    # Resolve the decorator function
+    log_decorator = function_resolver("application_log")
+
+    # Prepare input arguments for the test function
+    inputs = {item["column"]: item["value"] for item in case_data["input"]}
+
+    def add(a, b):
+        """Adds two numbers."""
+        return a + b
+
+    # Apply the decorator with specified parameters
+    decorated_add = log_decorator(
+        value=case_data["description"],
+        execution_time=True,
+        keywords_hidden=False,
+        function_help=True
+    )(add)
+
+    args = [item["value"] for item in case_data["input"]]
+    assert decorated_add(*args) == case_data["expected"]["result"]

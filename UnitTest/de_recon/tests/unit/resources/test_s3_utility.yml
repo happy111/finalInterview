@@ -1,0 +1,91 @@
+functions:
+  get_latest_key:
+    - case_id: S3C0001
+      description: Get latest key from S3 with valid partition
+      input:
+        - column: bucket
+          value: "my-bucket"
+        - column: prefix
+          value: "data/"
+        - column: file_type
+          value: ".csv"
+        - column: arn_type
+          value: null
+      mocks:
+        - target: "src.app.utils.s3_util.get_s3_client"
+          return_value:
+            get_paginator.return_value.paginate.return_value:
+              - Contents:
+                  - Key: "data/business_date=2025-10-01/file.csv"
+                    LastModified: "2025-10-01T12:00:00"
+      expected:
+        result:
+          - "2025-10-01"
+          - "data/business_date=2025-10-01"
+          - "2025-10-01T12:00:00"
+
+  list_s3_object:
+    - case_id: S3C0002
+      description: List S3 objects filtered by filetype
+      input:
+        - column: bucket
+          value: "my-bucket"
+        - column: prefix
+          value: "data/"
+        - column: filetype
+          value: "parquet"
+        - column: arn_type
+          value: null
+      mocks:
+        - target: "src.app.utils.s3_util.get_s3_client"
+          return_value:
+            get_paginator.return_value.paginate.return_value.search.return_value:
+              - Key: "data/entity/attribute/business_date=2025-10-01/file.parquet"
+                LastModified: "2025-10-01T12:00:00"
+      expected:
+        result:
+          - Key: "data/entity/attribute/business_date=2025-10-01/file.parquet"
+            LastModified: "2025-10-01T12:00:00"
+
+  get_latest_objects_by_bucket:
+    - case_id: S3C0003
+      description: Get latest S3 objects grouped by entity
+      input:
+        - column: bucket
+          value: "my-bucket"
+        - column: prefix
+          value: "data/"
+        - column: has_db_prefix
+          value: false
+        - column: is_wildcard_search
+          value: false
+        - column: arn_type
+          value: null
+        - column: uri_include
+          value: null
+        - column: uri_exclude
+          value: null
+        - column: filetype
+          value: "parquet"
+      mocks:
+        - target: "src.app.utils.s3_util.list_s3_object"
+          return_value:
+            - Key: "entity/attribute/src_sys_inst_id=123/business_date=2025-10-01/file.parquet"
+              LastModified: "2025-10-01T12:00:00"
+              Size: 1234
+              ETag: "etag"
+              StorageClass: "STANDARD"
+            - Key: "entity/attribute/src_sys_inst_id=123/business_date=2025-09-30/file.parquet"
+              LastModified: "2025-09-30T12:00:00"
+              Size: 1234
+              ETag: "etag"
+              StorageClass: "STANDARD"
+      expected:
+        result:
+          - Key: "entity/attribute/src_sys_inst_id=123/business_date=2025-10-01"
+            LastModified: "2025-10-01T12:00:00"
+            Size: 1234
+            entity: "entity"
+            entity_attribute: "attribute"
+            src_sys_inst_id: "123"
+            business_date: "2025-10-01"

@@ -1,0 +1,228 @@
+import re
+
+import pandas as pd
+
+from app.commons.aws.boto3_service import S3Session
+from app.commons.exception.exc import ReconAppException
+from app.commons.logging import logger
+from app.utils.AppUtility import is_valid_date, application_log
+import botocore.exceptions
+
+
+@application_log(value='get_latest_key', keywords_hidden=True)
+def get_latest_key(bucket, prefix, file_type, arn_type=None):
+    try:
+        s3_client = get_s3_client(arn_type)
+        operation_parameters = {'Bucket': bucket, 'Prefix': prefix}
+        logger.info(f'Getting latest key for {bucket}/{prefix}')
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages_iterator = paginator.paginate(**operation_parameters)
+        all_files = []
+        for pages in pages_iterator:
+            if pages.get('Contents'):
+                all_files.extend(
+                    [(page['Key'], page['LastModified']) for page in pages['Contents']
+                     if file_type and file_type.lower() in page['Key']])
+            else:
+                logger.info(pages)
+        if len(all_files) == 0:
+            logger.info("No page found")
+            return None, None, None
+        all_files.sort(reverse=True, key=lambda x: x[1])
+        recent_file = all_files[0][0]
+        last_modified = all_files[0][1]
+        logger.debug("recent_file : {0}".format(recent_file))
+        folder_object_key_list = recent_file.split('/')[:-1]
+        partition_list = list(filter(lambda folder_object_key: len(folder_object_key.split('=')) == 2 and
+                                                               is_valid_date(folder_object_key.split('=')[1]),
+                                     folder_object_key_list))
+        logger.info("partition_list : {0}".format(partition_list))
+        business_date = partition_list[0].split('=')[1]
+        file_path = '/'.join(folder_object_key_list)
+        logger.info(f'latest key found for {bucket}/{prefix}')
+        logger.info(f'last_modified : {last_modified}')
+        logger.debug("business_date : {0}".format(business_date))
+        return business_date, file_path, last_modified
+    except ReconAppException as recon_app_exception:
+        logger.error("Error while fetching the latest business date : %s", recon_app_exception, exc_info=0)
+    return None, None, None
+
+
+def get_s3_client(arn_type):
+    return S3Session(assumed_role=arn_type).get_client()
+
+
+def get_latest_objects_by_bucket(bucket, prefix, has_db_prefix, is_wildcard_search, arn_type=None, uri_include=None,
+                                 uri_exclude=None, filetype='parquet' , is_all_db_scan=False) -> pd.DataFrame:
+    latest_records_df = pd.DataFrame(columns=['Key', 'LastModified', 'Size', 'entity', 'entity_attribute',
+                                              'src_sys_inst_id', 'business_date'])
+    try:
+        dataset_uri_list = list_s3_object(bucket, prefix, filetype=filetype, arn_type=arn_type)
+        logger.info("list_s3_object : %s", len(dataset_uri_list))
+
+        s3_object_content_list = [] if is_wildcard_search else list(dataset_uri_list)
+        # logger.info("collected %s objects", s3_object_content_list)
+        if uri_include:
+            logger.info("get_latest_objects_by_bucket : object selection is in progress")
+            uri_pattern = [re.compile(uri) for uri in uri_include]
+            selected_object_list = []
+            for content in dataset_uri_list:
+                # select the required pattern
+                if any(re.match(pattern, content['Key']) for pattern in uri_pattern):
+                    selected_object_list.append(content)
+
+            if uri_exclude is None:
+                s3_object_content_list = selected_object_list
+            else:
+                # Filter by exclude pattern
+                logger.info("get_latest_objects_by_bucket : object filtering is in progress")
+                uri_exclusion_pattern = [re.compile(uri) for uri in uri_exclude]
+                for selected_object in selected_object_list:
+                    if not any(re.match(pattern, selected_object['Key']) for pattern in uri_exclusion_pattern):
+                        s3_object_content_list.append(selected_object)
+        if len(s3_object_content_list) == 0:
+            logger.info("collected %s objects", len(latest_records_df))
+            return latest_records_df
+        else:
+            s3_object_content_df = pd.DataFrame(s3_object_content_list)
+            # Determine column structure based on `has_db_prefix` and `src_sys_inst_id` presence
+            column_list = ['entity', 'entity_attribute', 'business_date', 'dataset']
+            if has_db_prefix:
+                column_list.insert(0, 'file_prefix')
+            if s3_object_content_df['Key'].str.contains('src_sys_inst_id').any():
+                column_list.insert(column_list.index('business_date'), 'src_sys_inst_id')
+            logger.info(s3_object_content_df['Key'].values)
+            s3_object_content_df[column_list] = s3_object_content_df['Key'].str.split('/', expand=True)
+            s3_object_content_df['Key'] = s3_object_content_df['Key'].apply(lambda key: "/".join(key.split('/')[0:-1]))
+
+            # Handle `src_sys_inst_id` only if present
+            if 'src_sys_inst_id' in s3_object_content_df.columns:
+                s3_object_content_df['src_sys_inst_id'] = s3_object_content_df['src_sys_inst_id'].apply(
+                    lambda x: x.split("=")[1])
+            s3_object_content_df['business_date'] = s3_object_content_df['business_date'].apply(
+                lambda bday: bday.split("=")[1])
+            s3_object_content_df['business_date'] = pd.to_datetime(s3_object_content_df['business_date']).dt.date
+            column_groups = ['entity', 'entity_attribute']
+            if 'src_sys_inst_id' in s3_object_content_df.columns:
+                column_groups.append('src_sys_inst_id')
+            latest_indices = s3_object_content_df.groupby(column_groups)['LastModified'].idxmax()
+            latest_records_df = s3_object_content_df.loc[latest_indices]
+            latest_records_df.drop(columns=['ETag', 'dataset', 'StorageClass'], inplace=True)
+            logger.debug(latest_records_df.dtypes)
+            logger.debug(latest_records_df)
+            json_str = latest_records_df.to_json(orient='records', date_format='iso')
+            logger.debug(json_str)
+            logger.info("collected %s objects", len(latest_records_df))
+            return latest_records_df
+    except ReconAppException as recon_app_exception:
+        logger.error("get_latest_objects_by_bucket : Error while fetching the s3 objects : %s", recon_app_exception,
+                     exc_info=True)
+        return latest_records_df
+    except Exception as exception:
+        logger.error("get_latest_objects_by_bucket : Error while fetching the s3 objects : %s", exception,
+                     exc_info=True)
+        return latest_records_df
+
+
+def list_s3_object(bucket, prefix, filetype='parquet', arn_type=None):
+    logger.info("list_s3_object : %s/%s", bucket, prefix)
+    try:
+        s3_client = get_s3_client(arn_type)
+        operation_parameters = {'Bucket': bucket, 'Prefix': prefix}
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages_iterator = paginator.paginate(**operation_parameters)
+        logger.info(f"Contents[?ends_with(Key, '{filetype}')]")
+        dataset_uri_list = pages_iterator.search(f"Contents[?ends_with(Key, '{filetype}')]")
+        return list(filter(bool, dataset_uri_list))
+    except Exception as ex:
+        logger.error("list_s3_object : Error while fetching the s3 objects : %s", ex, exc_info=True)
+        raise ReconAppException(ex)
+
+
+def list_s3_object_with_pagination(bucket, prefix, filetype='parquet', arn_type=None, max_retries=3):
+    """
+        List all S3 objects under bucket/prefix ending with specified filetype,
+        automatically refreshing S3 client on ExpiredToken errors and resuming
+        pagination from the last successful page.
+
+        Args:
+            bucket (str): S3 bucket name.
+            prefix (str): S3 key prefix.
+            filetype (str): file suffix filter, e.g. 'parquet'.
+            arn_type (optional): to be passed to get_s3_client.
+            max_retries (int): number of times to retry on credential expiry.
+
+        Returns:
+            List[str]: List of S3 object keys matching the suffix.
+        """
+    logger.info("list_s3_object_with_pagination : %s/%s", bucket, prefix)
+    attempt = 0
+    dataset_uri_list = []
+    continuation_token = None  # Tracks next page token to continue from
+
+    while True:
+        try:
+            # Create or refresh client on each attempt or retry
+            s3_client = get_s3_client(arn_type)
+            paginator = s3_client.get_paginator('list_objects_v2')
+
+            operation_parameters = {'Bucket': bucket, 'Prefix': prefix}
+            if continuation_token:
+                operation_parameters['ContinuationToken'] = continuation_token
+
+            page_iterator = paginator.paginate(**operation_parameters)
+
+            for page in page_iterator:
+                contents = page.get('Contents', [])
+                for obj in contents:
+                    key = obj.get('Key')
+                    if key and key.endswith(filetype):
+                        dataset_uri_list.append(key)
+
+                # If more pages, update continuation_token to next page token
+                if page.get('IsTruncated'):
+                    continuation_token = page.get('NextContinuationToken')
+                else:
+                    # No more pages; pagination complete
+                    continuation_token = None
+
+            # Completed iteration without exceptions; break outer loop
+            break
+
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'ExpiredToken':
+                attempt += 1
+                if attempt > max_retries:
+                    logger.error("Max retries reached while refreshing credentials")
+                    raise ReconAppException("Max retries reached while refreshing credentials")
+
+                logger.warning(f"Credentials expired: refreshing S3 client and resuming pagination "
+                               f"from token: {continuation_token} (attempt {attempt}/{max_retries})")
+                # Loop continues and will recreate client and paginator, resuming from continuation_token
+
+            else:
+                logger.error("list_s3_object : ClientError %s", e, exc_info=True)
+                raise
+
+        except Exception as ex:
+            logger.error("list_s3_object : Error while fetching the s3 objects : %s", ex, exc_info=True)
+            raise ReconAppException(ex)
+    logger.info("list_s3_object_with_pagination : %s", len(dataset_uri_list))
+    return dataset_uri_list
+
+
+def list_folder_common_prefixes(bucket, prefix, arn_type=None):
+    logger.info("list_s3_object : %s/%s", bucket, prefix)
+    try:
+        s3_client = get_s3_client(arn_type)
+        operation_parameters = {'Bucket': bucket, 'Prefix': prefix, 'Delimiter': '/'}
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages_iterator = paginator.paginate(**operation_parameters)
+        for page in pages_iterator:
+            # logger.info(page)
+            prefixes = page.get('CommonPrefixes', [])
+            return prefixes
+    except Exception as ex:
+        logger.error("list_s3_object : Error while fetching the s3 objects : %s", ex, exc_info=True)
+        raise ReconAppException(ex)
